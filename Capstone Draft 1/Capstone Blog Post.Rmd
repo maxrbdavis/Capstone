@@ -1,0 +1,335 @@
+---
+title: "Capstone Blog Post"
+author: "Max Davis"
+date: "10/15/2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##The Problem   
+  <p> The problem I will use this data to address: Is it possible to predict when a turbine will not produce power, when we would otherwise expect it to be producing. Wind turbines producing less than optimally is a natural problem for a wind farm, and insights about this problem may be gained from large sets of data from multiple wind turbines.
+
+##The Data  
+  <p>The Haute Borne Wind Farm in the north of France has released some data from 4 of its 7 turbines. This data covers approximately one year, starting in early 2017 until early 2018. Separate observations are listed for a given sensor's minimum, maximum, and average reading. This capstone project is an exploration of the data, with some machine learning techniques applied to it to make predictions. Included in the observations is "Active Power" in both a minimum, maximum, and average measurement. I decided to look carefully at this measurement of how much power a turbine is producing. Throughout the project Acive Power is the variable of interest, and expecially looking at Active Power in terms of how much wind there is, and thereby, whether or not a turbine is producing as it should, or as we would like it to. As I will demonstrate, the overwhelming trend of this data is that Wind Speed and Active Power are highly positively correlated, but there are interesting exceptions.   
+ <p> A wind farm is not a closed system but rather connected to a grid with fluctuations in Active Power that may have nothing to do with either wind or variables measured. The technicalities of this relationship are beyond the scope of this project and my own knowledge of the field. So I will focus on the dataset at hand as a starting point, knowing the results will not be definitive, but may be illuminating.   
+ <p> The first step was to get to know the data, clean it up, and rename the columns for easier readability. A more descriptive name for each variable and its units were provided in a key along with the dataset. 
+	<p>To begin exploring the relationship between Wind Speed and Active Power, I made some plots. These serve as a picture of the data. I used visualizion as a strategy for getting some insights into how to proceed with a model that might be able to predict some particular state of a turbine. The first is a simple display of all the data, showing Active Power Average against Wind Speed Average. The positive correlation is immediately visible. 
+
+```{r, message = FALSE, warning=F}
+library(readr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(data.table)
+
+haute_all_2017_2020 <- fread("la-haute-borne-data-2017-2020.csv", data.table = FALSE)
+
+data_description <- fread("data_description.csv")
+
+haute <- tbl_df(haute_all_2017_2020)
+metadata <- tbl_df(data_description)
+
+old <- metadata[,"Variable_name"]
+new <- metadata[, "Variable_long_name"]
+
+fast_clean <- function(df, x) {colnames(df) <- gsub (old[[c(1, x)]], new[[c(1, x)]], colnames(df)) ; df}
+
+haute<- fast_clean(haute, 20)
+haute<- fast_clean(haute, 27)
+
+n <- 1
+while(n < 20) {haute <- fast_clean(df = haute, x = n)
+  n <- (n + 1)
+  }
+n <- 21
+while(n < 27) {haute <- fast_clean(df = haute, x = n)
+  n <- (n + 1)
+  }
+n <- 28
+while(n <= 34) {haute <- fast_clean(df = haute, x = n)
+  n <- (n + 1)
+  }
+
+haute <- separate(haute, "Date_time", c("date", "time"), sep = "T", remove = TRUE, convert = FALSE, extra = "warn", fill = "warn")
+
+haute$date <- as.Date(haute$date, "%Y-%m-%d")
+
+ggplot(haute, aes(x = Wind_speed_avg, y = Active_power_avg))+
+  geom_point() +
+  labs(x = "Average Wind Speed (m/s)", y = "Active Power (kW)") +
+  ggtitle(("Average Active Power vs. Average Wind Speed"))
+```
+
+
+	
+<p> Despite the obvious upward trend, the data is not completely uniform. There are cases where the sensors were showing low Wind Speed, and unusually high Active Power, appearing as clusters to the left of the main trend line. On the other hand, there is a good amount of data displaying little Active Power, when Wind Speed is relatively high, the pooling at the bottom, and to the right. To better understand the anomalies, I seperated this aggregate data into facets. This clearly sets the individual wind turbines side by side. Two of the turbines had a more pronounced deviation from the main trend of the data. This was in the form of a steeply positive sloping branch to the left of the main branch.
+
+```{r, message = FALSE, warning=F}
+ggplot(haute, aes(x = Wind_speed_avg, y = Active_power_avg))+
+  geom_point() +
+  labs(x = "Average Wind Speed (m/s)", y = "Active Power (kW)") +
+  ggtitle(("Four Turbines, Average Active Power vs. Average Wind Speed")) +
+  facet_wrap(~Wind_turbine_name)
+```
+
+<p>To keep the same basic visualization and try to learn what made those areas different, I started mapping different variables to color, and found that by mapping Date to color, it was apparent that the break away groupings in each of the turbines mostly seem to be in the chronologically earlier part of the sample, appearing below as dark blue spikes to the left of the main grouping (where dark blue corresponds to earlier dates).
+
+```{r, message = FALSE, warning=F}
+ggplot(haute, aes(x = Wind_speed_avg, y = Active_power_avg))+
+  geom_point(aes(color = date, alpha = .5)) +
+  labs(x = "Average Wind Speed (m/s)", y = "Active Power (kW)") +
+  facet_wrap(~Wind_turbine_name) +
+  ggtitle("Four Turbines, Average Active Power vs. Average Wind Speed")
+```
+<p>Could it be the turbines ran more efficiently sooner after installation? Its tempting to think so, but the very highest points of efficiency (where there is wind speed around 5 m/s, and high active power) are later in the time series, or lighter in color. This plot also raised another question: why might turbine R80711 have a significantly larger range of active power readings at the higher wind speeds? Above ~12.5 m/s, the correlation between wind speed and active power becomes much weaker for that turbine.  
+<p>These are interesting problems, but to get a different perspective, I tried introducing time into the exploration, in particular comparing Wind Speeds over time. For a new set of plots, I mapped Date on the X-axis, and Wind Speed on the Y-axis, and this time mapped Active Power to color. Over a full year period, the resulting plot showed that wind rises and falls over time with a generally corresponding increase and decrease of Active Power as observed in the previous plots. But in this plot, some dark spikes indicate low to zero Active Power at high Wind Speeds:
+
+```{r, message = FALSE, warning=F}
+ggplot(haute, aes(x = date, y = Wind_speed_avg)) +
+  geom_point(aes(color = Active_power_avg))+
+  geom_smooth() +
+  labs(x = "Date", y = "Average Wind Speed (m/s)", color = "Active Power(kW)") +
+  scale_x_date(date_breaks = "6 month") +
+  facet_wrap(~Wind_turbine_name) +
+  ggtitle("Average Wind Speed Over Time")
+```
+	
+<p>As an experiment, I isolated the darkest spike in Turbine R80790’s time series. Since this dark spike represents an unexpected lack of Active Power at high Wind Speed for a given amount of time, I filtered out a smaller date range on either side of the dark spike (9 days) to see exactly which days are in question. 
+<p>The resulting plot reveals that this condition of low power and high wind occured over just a two day period, February 3rd and 4th of 2017, when despite the windy conditions, and the three other turbines producing power, Turbine R80790 was not producing. Further exploration might determine whether it was down for service (which would require access to service records), or perhaps we can find out if there might have been a predictor for that fault in the preceding time periods.  
+
+```{r, message = FALSE, warning=F}
+haute %>%
+  filter(date < as.Date("2017-02-8")) %>%
+  filter(date > as.Date("2017-01-29")) %>%
+  filter(Wind_turbine_name == "R80790") %>%
+  ggplot(aes(x = date, y = Wind_speed_avg)) +
+  geom_point(aes(color = Active_power_avg)) +
+  labs(x = "Date", y = "Average Wind Speed (m/s)", color = "Active Power(kW)") +
+  geom_smooth() +
+  scale_x_date(date_breaks = "1 day") +
+  facet_wrap(~Wind_turbine_name) +
+  ggtitle("Week of Unexpected Low Power for R80790")
+  
+```
+	
+
+##Feature Engineering for Machine Learning  
+  
+  <p>This visualization and exploration has suggested to me some parameters for a machine learning approach. I have already begun to think of this Active Power versus Wind Speed as a measure of efficiency. Since the dataset does not have a sensor reading for "efficiency" as I understand it based on this exploration, I will create a new variable. This variable will tell us for each of the data points, whether a turbine turbine is below an Active Power level of 50kW while Wind Speed is over the supposedly functional level of 5 m/s. I will call this binary variable "down", and a "1" in this column indicates that the conditions are met, and a "0" that they are not. So "1" in this column describes an undesirable state for the turbine. These parameters involve  assumptions about what a Turbine "should" be doing, but they do seem to entirely cover the cluster of data that caught our attention in the exploration,  Machine learning may be useful for predicting cases of "down", and with some further work, of preventing them.
+  
+```{r, message = FALSE, warning=F}
+down <- ifelse(haute$Wind_speed_avg > 5 & haute$Active_power_avg < 50, 1, 0)
+summary(down)
+haute$down <- as.factor(down)
+class(haute$down)
+```
+
+```{r, message = FALSE, warning=F}
+down <- haute$down
+haute_clean <- select(haute, -c(1,2,3))
+haute_clean <- haute_clean %>%
+                  select(-contains("Wind")) %>%
+                  select(-contains("Power"))
+```
+
+```{r, message = FALSE, warning=F }
+missing.values <- haute_clean %>%
+  gather(key = "key", value = "val") %>%
+  mutate(is.missing = is.na(val)) %>%
+  group_by(key, is.missing) %>%
+  summarise(num.missing = n()) %>%
+  filter(is.missing==T) %>%
+  select(-is.missing) %>%
+  arrange(desc(num.missing)) 
+missing.values
+
+```
+  
+  
+```{r, message = FALSE, warning=F}
+haute_complete <- haute_clean %>%
+                drop_na(down)
+```
+
+```{r, message = FALSE, warning=F}
+haute_complete <- haute_clean
+haute_complete <- haute_complete %>%
+                  select(-contains("Vane_position")) %>%
+                  select(-contains("Nacelle_angle_corrected"))
+```
+
+
+```{r, message = FALSE, warning=F}
+table(haute_complete$down)
+down_table <- table(haute_complete$down)
+down_table
+down_table[1]/(down_table[1] + down_table[2])
+```
+
+<p>Now that the "down" variable exists, it can be visualized. Here is the same plot of Wind Speed and Active Power, now with instances of "down" highlighted in light green. These green points are the data we are interested in predicting. When the wind is blowing, and there is no power being produced. These big towers not doing what they are supposed to be. 
+
+```{r, echo = FALSE, message = FALSE, warning=F}
+ggplot(haute, aes(x = Wind_speed_avg, y = Active_power_avg))+
+  geom_point(aes(color = down)) +
+  labs(x = "Average Wind Speed (m/s)", y = "Active Power (kW)") +
+  ggtitle("Active Power vs. Wind Speed with 'down' points highlighted") +
+  facet_wrap(~Wind_turbine_name)
+```  
+ 
+ 
+##Machine Learning
+
+<p>The positive cases of "down" is only about 1.2% of the dataset. By using some automated resampling techniques, we can get a version of this dataset that is more balanced so that we wont worry about our baseline being too high. We are going to look at all of the variables and see how statistically significant they are in relationship to "down". We use a model called logistic regression, that can be trained by measuring the relationship between all of the variables in the dataset and the new "down" variable we have created, and based on what it learns from this measuring process, it will tell us whether each instance of the "down" variable will be "1" or "0". This result can be compared to the actual value in the "down" column of the test set to let us know how accurate our model is. How good it is at predicting "down" turbines. 
+
+```{r, message = FALSE, warning=F}
+library(caret)
+library(DMwR)
+set.seed(2555)
+smote_haute <- SMOTE(down ~ ., data = as.data.frame(haute_complete))
+smoted_haute <- table(smote_haute$down)
+smoted_haute
+smoted_haute[2]/smoted_haute[1]
+smote_haute <- tbl_df(smote_haute)
+```
+
+```{r, message = FALSE, warning=F}
+missing.values <- smote_haute %>%
+  gather(key = "key", value = "val") %>%
+  mutate(is.missing = is.na(val)) %>%
+  group_by(key, is.missing) %>%
+  summarise(num.missing = n()) %>%
+  filter(is.missing==T) %>%
+  select(-is.missing) %>%
+  arrange(desc(num.missing)) 
+missing.values
+```
+
+<p>I will create a logistic regression model with the clean and balanced dataset, in which there are no missing values for "down". Additionally, and this is absolutely key to getting a result: I must use na.omit on the dataset before splitting it.
+I will split the balanced data into a train and test set with split.seed from caTools.
+
+```{r, message = FALSE, warning=F}
+library(caTools)
+```
+
+```{r, echo = FALSE, message = FALSE, warning=F}
+smote_haute_omitted <- na.omit(smote_haute)               
+split <- sample.split(smote_haute_omitted$down, SplitRatio = .65)
+train <- subset(smote_haute_omitted, split == TRUE)
+test <- subset(smote_haute_omitted, split == FALSE)
+table(train$down)
+table(test$down)
+```
+
+
+<p>I will create a logistic regression model to predict down, based on the training data.
+
+```{r, message = FALSE, warning=F}
+trainlogistic <- glm(down ~ ., data = train, family = binomial)
+summary(trainlogistic)
+```
+
+##Predictions
+
+<p>Now I will predict in the test set which turbines are down, using the logistic regression model and visualize them in a confusion matrix.
+
+
+```{r, message = FALSE, warning=F}
+predictTest <- predict(trainlogistic, type = "response", newdata = test)
+table(test$down)
+table(test$down, predictTest > .5)
+```
+
+```{r, message = FALSE, warning=F}
+input.matrix <- data.matrix(table(test$down, predictTest > .5))
+
+colnames(input.matrix) = c(FALSE, TRUE)
+rownames(input.matrix) = c(0, 1)
+
+glmconfusion <- as.data.frame(as.table(input.matrix))
+b <- c(0, 1800, 3500)
+plot <- ggplot(glmconfusion)
+plot + 
+  geom_tile(aes(x=Var1, y=Var2, fill=Freq)) +
+        labs(fill = "Normalized\nFrequency") +
+        scale_x_discrete(name="Actual Class") + 
+        scale_y_discrete(name="Predicted Class") + 
+        scale_fill_gradient(breaks=b, labels = format(b)) + 
+        ggtitle("Logistic Regression: Predicted vs. Actual")
+        
+```
+
+<p>I will measure the performance of this model overall by measuring the area under the ROC curve and plotting it.
+
+```{r, message = FALSE, warning=F}
+library(ROCR)
+ROCRpred <- prediction(predictTest, test$down)
+as.numeric(performance(ROCRpred, "auc")@y.values)
+perf <- performance(ROCRpred,"tpr","fpr")
+plot(perf,colorize=TRUE)
+```
+
+<p>The area under an ROC curve is .9913. As a measure of accuracy for this model, which is more accurate than the baseline of .9885. But all the same, could be used to predict down turbines with an accceptable degree of accuracy in the event that no wind or power data is available.
+
+
+<p>Logistic regression produces some result, though it is problematic (I will talk about this in the report). I will try cross validation. This will be 10-fold cross validation, so the training data will be split into 10 groups, and a model will be created ten times, with each of the ten groups acting as a test set. 
+```{r, message = FALSE, warning=F}
+
+
+ctrl <- trainControl(method = "repeatedcv", number = 10, savePredictions = TRUE)
+
+mod_fit <- train(down ~ .,  data = train, method="glm", family="binomial",
+                 trControl = ctrl, tuneLength = 5)
+
+predCV <- predict(mod_fit, newdata = test)
+
+summary(predCV)
+```
+
+<p>And visualize the confusion matrix for this as well. 
+
+```{r, message = FALSE, warning=F}
+table(predCV, test$down)
+
+confusion2 <- confusionMatrix(data = predCV, test$down)
+
+input.matrix2 <- data.matrix(table(test$down, predictTest > .5))
+
+
+colnames(input.matrix2) = c(FALSE, TRUE)
+rownames(input.matrix2) = c(0, 1)
+
+confusion2 <- as.data.frame(as.table(input.matrix))
+b <- c(0, 1800, 3500)
+plot2 <- ggplot(confusion2)
+plot2 + 
+  geom_tile(aes(x=Var1, y=Var2, fill=Freq)) +
+        labs(fill = "Normalized\nFrequency") +
+        scale_x_discrete(name="Actual Class") + 
+        scale_y_discrete(name="Predicted Class") + 
+        scale_fill_gradient(breaks=b, labels = format(b)) + 
+        ggtitle("10-Fold Cross Validation: Predicted vs. Actual")
+
+```
+
+##Results
+
+<p>Accuracy for the GLM prediction by area under the curve.
+
+```{r, message = FALSE, warning=F}
+as.numeric(performance(ROCRpred, "auc")@y.values)
+table(test$down, predictTest > .5)
+```
+
+<p>Accuracy for the cross validation.
+
+```{r, message = FALSE, warning=F}
+confusionMatrix(predCV, test$down)
+```
+
+##Conclusion
+
+<p>While the data can be fitted to a machine learning mode, and a result can be produced. The high accuracy of the predicitions, there may be unexplored problems with modeling the data in this way. A wind turbine's system of sensors is designed to do predict errors in a turbine. In other words, every system monitored by the sensors has a close relationship to either wind speed or power. The temperatures of various components, the vane positions, the pitch angles, all of these componenets are designed in relationship to the wind and the power distribution. A more nuanced approach to prediction with this data would probably include some kind of time series analysis, in which certain features in the moments or days before a condition of "down" or similar is registered may be used to predict the failing wind turbine. Machine learning in this kind of technical field would also benefit from the insights of someone with more specific domain knowledge than I have. A model designed with these things in mind, and perhaps combined with a time series analysis to create a model that could serve as more of an "early warning" predictor might be of more use. Based on my project, as reccomendations to the client, in this case, the power company operating the Huate Borne Wind Farm, do a
